@@ -11,3 +11,6 @@ categories = ["hardware-support", "multimedia"]
 
 [dependencies]
 byteorder = "1.4"
+
+[lib]
+crate-type = ["staticlib", "rlib"]

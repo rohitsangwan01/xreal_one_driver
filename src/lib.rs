@@ -1,7 +1,7 @@
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::{io::Read, net::TcpStream, time::Duration};
+use std::{ffi::CStr, io::Read, net::TcpStream, os::raw::c_char, time::Duration};
 
 #[derive(Debug, Clone)]
 pub struct IMUData {
@@ -21,6 +21,16 @@ impl XrealOne {
 
     pub fn new() -> Result<Self, std::io::Error> {
         let addr = "169.254.2.1:52998";
+        let socket_addr = addr.parse::<SocketAddr>().unwrap();
+        let stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        Ok(Self {
+            stream,
+            recv_buffer: Vec::new(),
+        })
+    }
+
+    pub fn new_with_addr(addr: &str) -> Result<Self, std::io::Error> {
         let socket_addr = addr.parse::<SocketAddr>().unwrap();
         let stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -172,5 +182,74 @@ impl XrealOne {
 
     fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         haystack.windows(needle.len()).position(|w| w == needle)
+    }
+}
+
+// ===================== C FFI =====================
+
+#[repr(C)]
+pub struct XOImu {
+    pub gyro: [f32; 3],
+    pub accel: [f32; 3],
+    pub timestamp: u64,
+}
+
+#[repr(C)]
+pub struct XrealOneHandle {
+    inner: XrealOne,
+}
+
+#[no_mangle]
+pub extern "C" fn xo_new() -> *mut XrealOneHandle {
+    match XrealOne::new() {
+        Ok(inner) => Box::into_raw(Box::new(XrealOneHandle { inner })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn xo_new_with_addr(addr: *const c_char) -> *mut XrealOneHandle {
+    if addr.is_null() {
+        return std::ptr::null_mut();
+    }
+    let cstr = unsafe { CStr::from_ptr(addr) };
+    let s = match cstr.to_str() {
+        Ok(s) => s,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    match XrealOne::new_with_addr(s) {
+        Ok(inner) => Box::into_raw(Box::new(XrealOneHandle { inner })),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn xo_free(handle: *mut XrealOneHandle) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle));
+    }
+}
+
+// Returns 0 on success, non-zero on failure
+#[no_mangle]
+pub extern "C" fn xo_next(handle: *mut XrealOneHandle, out: *mut XOImu) -> i32 {
+    if handle.is_null() || out.is_null() {
+        return -1;
+    }
+    let handle = unsafe { &mut *handle };
+    match handle.inner.next() {
+        Ok(imu) => {
+            let xo = XOImu {
+                gyro: imu.gyro,
+                accel: imu.accel,
+                timestamp: imu.timestamp,
+            };
+            unsafe { *out = xo; }
+            0
+        }
+        Err(_) => 1,
     }
 }
