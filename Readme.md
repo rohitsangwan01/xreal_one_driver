@@ -1,6 +1,6 @@
 ## XrealOne Driver
 
-Xreal one imu driver
+Xreal one Imu driver used in [VertoXR](https://vertoxr.com/)
 
 ## Getting Started
 
