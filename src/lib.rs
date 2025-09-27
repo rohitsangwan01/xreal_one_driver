@@ -3,8 +3,9 @@ use std::io::Cursor;
 use std::net::SocketAddr;
 use std::{ffi::CStr, io::Read, net::TcpStream, os::raw::c_char, time::Duration};
 
+#[repr(C)]
 #[derive(Debug, Clone)]
-pub struct IMUData {
+pub struct XOImu {
     pub gyro: [f32; 3],
     pub accel: [f32; 3],
     pub timestamp: u64,
@@ -21,13 +22,7 @@ impl XrealOne {
 
     pub fn new() -> Result<Self, std::io::Error> {
         let addr = "169.254.2.1:52998";
-        let socket_addr = addr.parse::<SocketAddr>().unwrap();
-        let stream = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(2))?;
-        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-        Ok(Self {
-            stream,
-            recv_buffer: Vec::new(),
-        })
+        Self::new_with_addr(addr)
     }
 
     pub fn new_with_addr(addr: &str) -> Result<Self, std::io::Error> {
@@ -40,7 +35,7 @@ impl XrealOne {
         })
     }
 
-    pub fn next(&mut self) -> std::io::Result<IMUData> {
+    pub fn next(&mut self) -> Result<XOImu, std::io::Error> {
         loop {
             if let Some(imu) = self.try_parse_message() {
                 return Ok(imu);
@@ -63,7 +58,7 @@ impl XrealOne {
         }
     }
 
-    fn try_parse_message(&mut self) -> Option<IMUData> {
+    fn try_parse_message(&mut self) -> Option<XOImu> {
         loop {
             let header_pos = match Self::find_subsequence(&self.recv_buffer, &Self::HEADER) {
                 Some(pos) => pos,
@@ -95,7 +90,7 @@ impl XrealOne {
         }
     }
 
-    fn try_decode_imu(data: &[u8]) -> Result<IMUData, std::io::Error> {
+    fn try_decode_imu(data: &[u8]) -> Result<XOImu, std::io::Error> {
         let mut reader = Cursor::new(data);
 
         reader.set_position(14);
@@ -173,7 +168,7 @@ impl XrealOne {
             ));
         }
 
-        Ok(IMUData {
+        Ok(XOImu {
             gyro: [-gx, -gz, -gy],
             accel: [-ax, -az, -ay],
             timestamp: ts1,
@@ -186,13 +181,6 @@ impl XrealOne {
 }
 
 // ===================== C FFI =====================
-
-#[repr(C)]
-pub struct XOImu {
-    pub gyro: [f32; 3],
-    pub accel: [f32; 3],
-    pub timestamp: u64,
-}
 
 #[repr(C)]
 pub struct XrealOneHandle {
@@ -241,13 +229,10 @@ pub extern "C" fn xo_next(handle: *mut XrealOneHandle, out: *mut XOImu) -> i32 {
     }
     let handle = unsafe { &mut *handle };
     match handle.inner.next() {
-        Ok(imu) => {
-            let xo = XOImu {
-                gyro: imu.gyro,
-                accel: imu.accel,
-                timestamp: imu.timestamp,
-            };
-            unsafe { *out = xo; }
+        Ok(xo) => {
+            unsafe {
+                *out = xo;
+            }
             0
         }
         Err(_) => 1,
