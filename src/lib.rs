@@ -50,6 +50,8 @@ impl XrealOne {
                     ));
                 }
                 Ok(n) => self.recv_buffer.extend_from_slice(&temp_buf[..n]),
+                // a stop and resume (SIGSTOP, SIGCONT) interrupts the read; the stream is fine
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => {
                     println!("Error reading glasses event: {}", e);
                     return Err(e);
